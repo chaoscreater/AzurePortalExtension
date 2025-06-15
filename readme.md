@@ -6,9 +6,9 @@ A Google Chrome/Microsoft Edge extension to add features into the Microsoft Azur
 This is not an official Microsoft extension.
 
 
-====================================================================================================================================================================================================================================================================
+=============================================
 Updated & modified to work on the latest Azure Portal (June 2025)
-====================================================================================================================================================================================================================================================================
+=============================================
 
 This extension has been updated to work on the latest Azure Portal as of June 2025. In addition, I've tweaked the output to show the number of resources against each resource group with colours. Green represents RG with less than 10 resources, orange for less than 40 resources and red for anything over 40.
 
