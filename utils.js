@@ -10,7 +10,7 @@ function logScript(message) {
 
 function log(file, message) {
     if (IS_DEV_MODE) {
-        console.log("APE [" + file + "] " + message);
+        console.log("[Azure Portal extension - modded by Ricky] - [" + file + "] - " + message);
     }
 }
 

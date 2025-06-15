@@ -1,34 +1,84 @@
 'use strict';
 
-logScript("starting");
+var is_Highlight_Resources_Tickbox_Checked;
+
+// Get the highlighting setting from storage
+chrome.storage.sync.get('isHighlightRG', function(data) {
+	is_Highlight_Resources_Tickbox_Checked = data.isHighlightRG;
+	console.log('[APE] Highlight Resources tickbox is:', is_Highlight_Resources_Tickbox_Checked ? 'checked' : 'not checked');
+});
+
+
+
+// This script runs in all frames. First, check if we are the correct one.
+// The Resource Group list lives inside an iframe named 'BrowseResourceGroups.ReactView'.
+if (window.name === 'BrowseResourceGroups.ReactView') {
+    
+    // --- This is the correct frame! ---
+    // All execution logic should be started from inside this block.
+    
+    console.log('[Azure Portal extension] - Correct iframe context detected. Initializing script...');
+
+    var subscriptions = [];
+    var isUpdateLoopRunning = false;
+
+
+    // Start the process by fetching subscription data.
+    // Wait 3 seconds to give the portal a chance to get its own auth tokens.
+    setTimeout(getSubscriptionData, 3000);
+
+} else {
+    // --- This is the wrong frame (e.g., the top window or another iframe) ---
+    // Do nothing. Log the frame name for debugging purposes and stop.
+    // console.log(`[APE] Script loaded in non-target frame: '${window.name || 'top_window'}'. Halting.`);
+}
+
+
+// =================================================================================
+// The rest of your functions (getSubscriptionData, updatePortal, etc.) remain below this block.
+// They will now only be called by the script in the correct frame.
+// =================================================================================
 
 function updatePortal() {
+    // We no longer need to check the URL here because the script's entry point
+    // already guarantees we are in the correct context.
+    updateResourceGroupList();
 
-    //All updates start in this thread
-    if (isUrlShowingResourceGroups(window.location.href) === true) {
-        updateResourceGroupList();
-    }
-
-    if (isUrlShowingResources(window.location.href) === true) {
+    if (isUrlShowingResources(window.location.href)) {
         updateResourceList();
     }
-
-    //Update every second
+    
+    // The loop is still useful if the user navigates within the blade, causing re-renders.
     setTimeout(updatePortal, 1000);
 }
 
-function updateData() {
-    chrome.runtime.sendMessage("getSubscriptions", function(response) {
-        logScript("sending getSubscriptions");
-        subscriptions = response.subscriptions;
-    });
-
-    // Updating every 5 seconds as it might take a while with large accounts
-    setTimeout(updateData, 10000);
+// Ensure updatePortal is only started ONCE after data is received.
+function getSubscriptionData() {	
+	console.log("[APE] - running getSubscriptionData() - getSubscriptions - start")
+	
+    chrome.runtime.sendMessage("getSubscriptions", function(response) {		
+        if (response === undefined || !response.subscriptions) {
+            console.error("[APE] Response is undefined or invalid. Retrying in 3 seconds.");			
+			setTimeout(getSubscriptionData, 3000);
+        } else {
+			console.log("[APE] - Good response. Subscriptions loaded.");
+			subscriptions = response.subscriptions;
+            // Start the UI update loop ONLY after we have the data
+            // and only if it's not already running.
+            if (!isUpdateLoopRunning) {
+                updatePortal();
+                isUpdateLoopRunning = true;
+            }
+        }
+    });
+	
+	console.log("[APE] - getSubscriptionData() message sent.");
 }
 
+// (The rest of your functions: getSubscriptionFromName, updateResourceGroupList, etc., continue here without changes)
+
 //Wait one second to ensure we have got the azure Auth token in the background
-setTimeout(updateData, 1000);
+setTimeout(getSubscriptionData, 3000);
 updatePortal();
 
 var subscriptions = []
@@ -75,10 +125,19 @@ function getWebAppsFromResourceGroup(resourceGroup) {
 }
 
 function isUrlShowingResourceGroups(uri) {
-    if (uri.toLowerCase().endsWith("/resourceGroups".toLowerCase())) {
+    // --- New, corrected logic for running inside the iframe ---
+
+    // The most reliable check is the name of the iframe itself.
+    // We discovered this name in the previous steps.
+    if (window.name === 'BrowseResourceGroups.ReactView') {
         return true;
     }
-    else if (uri.toLowerCase().endsWith("/BrowseResourceGroups".toLowerCase())) {
+
+    // --- Original logic as a fallback for other pages ---
+    const lowerUri = uri.toLowerCase();
+    if (lowerUri.endsWith("/resourcegroups") || 
+        lowerUri.endsWith("/browseresourcegroups") || 
+        lowerUri.endsWith("/browseresourcegroupslegacy")) {
         return true;
     }
 
@@ -89,6 +148,12 @@ function isUrlShowingResources(uri) {
     if (uri.toLowerCase().endsWith("/resources".toLowerCase())) {
         return true;
     }
+    if (uri.toLowerCase().endsWith("/BrowseAll".toLowerCase())) {
+        return true;
+    }	
+    if (uri.toLowerCase().endsWith("/BrowseResource".toLowerCase())) {
+        return true;
+    }		
     if (uri.toLowerCase().indexOf("/resourceGroups".toLowerCase()) !== -1
         && uri.toLowerCase().indexOf("/overview") !== -1) {
         return true;
@@ -112,6 +177,21 @@ function updateResourceList() {
 
         const linkRegexp = /resource\/subscriptions\/(?<sub>[^/]*)\/resourceGroups\/(?<rg>.*)\/providers\/(?<type>.*\/.*)\/(?<name>.*)/g;
         let matches = linkRegexp.exec(link);
+		
+		
+		if (is_Highlight_Resources_Tickbox_Checked) {
+			console.log('APE - Highlighting Resource is enabled.');
+			
+			if (matches.groups.name.toLowerCase().includes("sbx")) {
+				$(row).css("background-color", "yellow");
+			} else if (matches.groups.name.toLowerCase().includes("dev") || matches.groups.name.toLowerCase().includes("uat") || matches.groups.name.toLowerCase().includes("tst") || matches.groups.name.toLowerCase().includes("npr") || matches.groups.name.toLowerCase().includes("nonprod")) {
+				$(row).css("background-color", "#FFD700");
+			} else if (matches.groups.name.toLowerCase().includes("prd") || matches.groups.name.toLowerCase().includes("prod")) {
+				$(row).css("background-color", "lightgreen");
+			}
+		}
+
+
 
         if (matches == null) {
             return;
@@ -132,7 +212,7 @@ function updateResourceList() {
             return;
         }
 
-        //chrome.runtime.sendMessage("getSubscriptions"
+        //chrome.runtime.sendMessage("getSubscriptions")
 
         if (resource.type === "Microsoft.Web/sites") {
             $(linkdiv).off();
@@ -221,50 +301,113 @@ function addPopupLink(text, link) {
 /**
  * This function runs the same queries as updateResourceGroupList() but changes rgElem to red and rgSub to green for testing.
  */
-function testUpdateResourceGroupList() {
-    const rows = $('div.fxc-gc-row-content');
-    rows.each((index, row) => {
-        // noinspection CssInvalidPseudoSelector
-        $(row).find('div:regex(class,fxc-gc-cell\.fxc-gc-columncell_[0-9]_0)').find('a.fxc-gcflink-link').css("background-color", "red");
-        // noinspection CssInvalidPseudoSelector
-        $(row).find('div:regex(class,fxc-gc-cell\.fxc-gc-columncell_[0-9]_1)').find('a.fxc-gcflink-link').css("background-color", "green");
-    });
+function testUpdateResourceGroupList(retries = 5, interval = 1000) {
+    console.log(`[APE Test] Looking for resource group rows. Attempts left: ${retries}`);
+    const rows = $('div[data-automationid="DetailsRow"]');
+
+    if (rows.length > 0) {
+        console.log(`[APE Test] SUCCESS: Found ${rows.length} rows. Applying test colors.`);
+        rows.each((index, row) => {
+            $(row).find('div[data-automation-key^="name"]').find('a').css("background-color", "red").css("color", "white");
+            $(row).find('div[data-automation-key^="subscription"]').find('a').css("background-color", "green").css("color", "white");
+        });
+        return;
+    }
+    if (retries <= 0) {
+        console.error("[APE Test] FAILED: Could not find any rows after 5 attempts.");
+        return;
+    }
+    setTimeout(() => {
+        testUpdateResourceGroupList(retries - 1, interval);
+    }, interval);
 }
+//testUpdateResourceGroupList();
+
+
+
+
+
 
 /**
- * Updates the UI list
+ * Updates the UI list for resource groups.
+ * This is the final, corrected version for the new Azure Portal UI.
  */
 function updateResourceGroupList() {
-    const rows = $('div.fxc-gc-row-content');
+	
+	//console.log(`[APE Test] SUCCESS: Inside updateResourceGroupList.`);
+	
+    // This selector targets the stable automation ID for each row in the new grid.
+    const rows = $('div[data-automationid="DetailsRow"]');
+
+    // If rows aren't found on a given check, the function simply exits.
+    // The main updatePortal() loop will call it again in 1 second.
+    if (rows.length === 0) {
+        return;
+    }
+
     rows.each((index, row) => {
+        // Prevent re-processing rows that have already been handled to improve performance.
+        if ($(row).data('ape-processed')) {
+            return; // 'continue' to the next iteration of the .each() loop
+        }
 
-        // noinspection CssInvalidPseudoSelector
-        let rgElem = $(row).find('div:regex(class,fxc-gc-cell\.fxc-gc-columncell_[0-9]_0)').find('a.fxc-gcflink-link')
-        let rgName = $(rgElem).text();
+        // Find the elements for RG name and Subscription name using their automation keys.
+        let rgElem = $(row).find('div[data-automation-key^="name"] a');
+        let rgName = rgElem.text();
 
-        // noinspection CssInvalidPseudoSelector
-        let subElem = $(row).find('div:regex(class,fxc-gc-cell\.fxc-gc-columncell_[0-9]_1)').find('a.fxc-gcflink-link');
-        let subName = $(subElem).text();
+        let subElem = $(row).find('div[data-automation-key^="subscription"] a');
+        let subName = subElem.text();
+
+        // --- Your original logic starts here ---
+
+        if (is_Highlight_Resources_Tickbox_Checked) {
+            if (rgName.toLowerCase().includes("sbx")) {
+                $(row).css("background-color", "yellow");
+            } else if (rgName.toLowerCase().includes("dev") || rgName.toLowerCase().includes("uat") || rgName.toLowerCase().includes("tst") || rgName.toLowerCase().includes("npr") || rgName.toLowerCase().includes("nonprod")) {
+                $(row).css("background-color", "#FFD700");
+            } else if (rgName.toLowerCase().includes("prd") || rgName.toLowerCase().includes("prod")) {
+                $(row).css("background-color", "lightgreen");
+            }
+        }
 
         let sub = getSubscriptionFromName(subName);
         if (sub == null) {
-            return;
+            return; // continue
         }
 
         let rg = getResourceGroup(rgName, sub);
         if (rg == null) {
-            return;
+            return; // continue
         }
 
         if (rg.resources === null || rg.resources.length === 0) {
-            $(row).css("border-style", "dashed");
-            $(row).css("border-color", "red");
+            $(row).css({
+                "border-style": "dashed",
+                "border-color": "red"
+            });
+            $(rgElem).append(" --- <span style='color: red;'>Empty Resource Group</span>");
+        } else {
+            let color;
+            if (rg.resources.length < 10) {
+                color = 'green';
+            } else if (rg.resources.length <= 40) {
+                color = 'orange';
+            } else { // Greater than 40
+                color = 'red';
+            }
 
-            $(rgElem).text($(rgElem).text() + " | Empty Resource Group");
-            $(rgElem).attr('style', 'color: #FF0000;');
+            $(rgElem).append(` --- <span style='color: ${color}; font-weight: bold; font-size: 1.1em;'>${rg.resources.length} resources</span>`);
         }
+
+        // Mark the row as processed so this logic doesn't run on it again.
+        $(row).data('ape-processed', true);
     });
 }
+
+
+
+
+
 
 var popup = "<div id=\"ape-popup\" class=\"fxs-commands-contextMenu az-noprint fxs-contextMenu fxs-popup fxs-portal-bg-txt-br msportalfx-shadow-level2 msportalfx-unselectable fxs-contextMenu-active\">" +
     "    <ul role=\"menu\" class=\"fxs-contextMenu-itemList\">" +
